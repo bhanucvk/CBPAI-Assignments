@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Documents</title>
+  <style>
+    body{font-family:system-ui, -apple-system, "Segoe UI", Roboto, Arial; margin:24px; background:#f6fbff;}
+    h1{margin-bottom:8px;}
+    .doc-list{list-style:none;padding:0;}
+    .doc-item{display:flex;align-items:center;justify-content:space-between;padding:8px;background:#fff;border-radius:8px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,.06);}
+    .actions{display:flex;gap:8px;}
+    .btn{padding:6px 10px;border-radius:6px;border:0;cursor:pointer;}
+    .btn-blue{background:#0b63ff;color:#fff;}
+    .btn-red{background:#ff4f4f;color:#fff;}
+    #dropZone{border:2px dashed #0b63ff;padding:24px;text-align:center;border-radius:10px;background:rgba(11,99,255,0.06); cursor:pointer;}
+    #dropZone.dragover{background:rgba(11,99,255,0.12);}
+    input[type="password"], input[type="text"]{padding:8px;width:100%;box-sizing:border-box;margin-bottom:8px;border-radius:6px;border:1px solid #dcdcdc;}
+    .small{font-size:0.9rem;color:#555;}
+    .admin-panel{margin-top:16px;background:#fff;padding:12px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
+  </style>
+</head>
+<body>
+  <h1>📂 Documents</h1>
+  <p class="small">Files are stored in <code>/docs</code>. Click a file to download.</p>
+
+  <ul id="docList" class="doc-list"></ul>
+
+  <hr/>
+
+  <!-- Admin login -->
+  <div id="loginCard" class="admin-panel">
+    <h3>🔒 Admin (show upload tools)</h3>
+    <input id="adminPass" type="password" placeholder="Enter admin password">
+    <button id="adminLogin" class="btn btn-blue">Login</button>
+    <p class="small">After login you must supply a GitHub personal access token to upload/delete.</p>
+  </div>
+
+  <!-- Admin upload/delete area (hidden until login) -->
+  <div id="adminArea" class="admin-panel" style="display:none;">
+    <h3>Admin tools</h3>
+    <label class="small">GitHub Personal Access Token (keep secret)</label>
+    <input id="ghToken" type="password" placeholder="Paste token here (repo scope)">
+    <div style="margin-top:8px;">
+      <div id="dropZone">Drag & Drop files here, or click to select files</div>
+      <input id="fileInput" type="file" multiple style="display:none;">
+    </div>
+    <p class="small" style="margin-top:8px;">Uploaded files will be committed to <code>/docs</code> on branch specified in code.</p>
+    <button id="logout" class="btn" style="margin-top:8px;">Logout</button>
+  </div>
+
+<script>
+/* ---- CONFIG: set these to your repo values ---- */
+const USER = "bhanucvk";        // <-- replace
+const REPO = "CBPAI-Assignments";      // <-- replace
+const BRANCH = "main";              // <-- replace if different
+const DOCS_PATH = "docs";
+const ADMIN_PASSWORD = "Adity@882002"; // <-- choose a password
+/* ------------------------------------------------ */
+
+const API_BASE = `https://api.github.com/repos/${USER}/${REPO}/contents/${DOCS_PATH}`;
+const docListEl = document.getElementById('docList');
+const adminArea = document.getElementById('adminArea');
+const loginCard = document.getElementById('loginCard');
+const adminLoginBtn = document.getElementById('adminLogin');
+const adminPassInput = document.getElementById('adminPass');
+const ghTokenInput = document.getElementById('ghToken');
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const logoutBtn = document.getElementById('logout');
+
+async function loadFiles() {
+  docListEl.innerHTML = '<li class="small">Loading...</li>';
+  try {
+    const res = await fetch(API_BASE);
+    if (!res.ok) throw new Error('Not found or empty');
+    const files = await res.json();
+    docListEl.innerHTML = '';
+    // Sort alphabetically
+    files.sort((a,b)=> a.name.localeCompare(b.name));
+    files.forEach(f=>{
+      if (f.type !== 'file') return;
+      const li = document.createElement('li');
+      li.className = 'doc-item';
+      const left = document.createElement('div');
+      left.innerHTML = `<a href="${f.download_url}" target="_blank">${f.name}</a><div class="small">${(f.size/1024).toFixed(1)} KB</div>`;
+      li.appendChild(left);
+
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+
+      // If admin logged in, show delete button
+      if (adminArea.style.display !== 'none') {
+        const delBtn = document.createElement('button');
+        delBtn.className = 'btn btn-red';
+        delBtn.textContent = 'Delete';
+        delBtn.onclick = ()=>confirmAndDelete(f);
+        actions.appendChild(delBtn);
+      }
+
+      li.appendChild(actions);
+      docListEl.appendChild(li);
+    });
+    if (files.length === 0) docListEl.innerHTML = '<li class="small">No files yet. Admins can upload files.</li>';
+  } catch (e) {
+    docListEl.innerHTML = '<li class="small">Unable to load files (maybe /docs is empty).</li>';
+    console.error(e);
+  }
+}
+
+// Admin login
+adminLoginBtn.addEventListener('click', ()=> {
+  const p = adminPassInput.value || '';
+  if (p === ADMIN_PASSWORD) {
+    loginCard.style.display = 'none';
+    adminArea.style.display = 'block';
+    loadFiles(); // reload to show delete buttons
+  } else {
+    alert('Incorrect admin password');
+  }
+});
+logoutBtn.addEventListener('click', ()=> {
+  ghTokenInput.value = '';
+  adminPassInput.value = '';
+  adminArea.style.display = 'none';
+  loginCard.style.display = 'block';
+  loadFiles();
+});
+
+// Drag & drop / file selection
+dropZone.addEventListener('click', ()=> fileInput.click());
+fileInput.addEventListener('change', ev => {
+  const files = Array.from(ev.target.files);
+  files.forEach(uploadFile);
+});
+dropZone.addEventListener('dragover', ev => { ev.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', ev => { dropZone.classList.remove('dragover'); });
+dropZone.addEventListener('drop', ev => {
+  ev.preventDefault(); dropZone.classList.remove('dragover');
+  const files = Array.from(ev.dataTransfer.files);
+  files.forEach(uploadFile);
+});
+
+// Upload helper: check if file exists (to include sha for update)
+async function getFileMeta(filename) {
+  const url = `${API_BASE}/${encodeURIComponent(filename)}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  return await res.json(); // includes .sha
+}
+
+// Upload or update file
+async function uploadFile(file) {
+  const token = ghTokenInput.value.trim();
+  if (!token) { alert('Paste GitHub token first'); return; }
+  try {
+    const meta = await getFileMeta(file.name);
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64 = reader.result.split(',')[1];
+      const body = {
+        message: `${meta ? 'Update' : 'Add'} ${file.name} via web UI`,
+        content: base64,
+        branch: BRANCH
+      };
+      if (meta && meta.sha) body.sha = meta.sha; // update existing file
+      const url = `${API_BASE}/${encodeURIComponent(file.name)}`;
+      const res = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `token ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      });
+      const js = await res.json();
+      if (res.ok) {
+        alert(`${file.name} uploaded`);
+        loadFiles();
+      } else {
+        console.error(js);
+        alert(`Upload failed: ${js.message || JSON.stringify(js)}`);
+      }
+    };
+    reader.readAsDataURL(file);
+  } catch (err) {
+    console.error(err);
+    alert('Upload error: ' + err.message);
+  }
+}
+
+// Confirm + delete file
+async function confirmAndDelete(fileMeta) {
+  if (!confirm(`Delete ${fileMeta.name}? This is permanent.`)) return;
+  const token = ghTokenInput.value.trim();
+  if (!token) { alert('Paste GitHub token first'); return; }
+  try {
+    // Need the file sha
+    const meta = await getFileMeta(fileMeta.name);
+    if (!meta || !meta.sha) { alert('Unable to get file SHA'); return; }
+    const url = `${API_BASE}/${encodeURIComponent(fileMeta.name)}`;
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `token ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        message: `Delete ${fileMeta.name} via web UI`,
+        sha: meta.sha,
+        branch: BRANCH
+      })
+    });
+    const js = await res.json();
+    if (res.ok) {
+      alert(`${fileMeta.name} deleted`);
+      loadFiles();
+    } else {
+      console.error(js);
+      alert(`Delete failed: ${js.message || JSON.stringify(js)}`);
+    }
+  } catch (err) {
+    console.error(err);
+    alert('Delete error: ' + err.message);
+  }
+}
+
+// Initial load
+loadFiles();
+</script>
+</body>
+</html>
